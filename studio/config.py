@@ -127,6 +127,10 @@ YT_TRANSCRIPT = env("PEAKCUT_YT_TRANSCRIPT", "1") != "0"
 # the compact model for processors; a machine with a graphics card sets PEAKCUT_ASR_MODEL to the full-precision one
 ASR_MODEL_NAME = env("PEAKCUT_ASR_MODEL", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
 ASR_MODEL_DIR = MODELS_DIR / ASR_MODEL_NAME
+# Arabic: NVIDIA's FastConformer, converted for PeakCut with tools/export_arabic_model.py. Downloaded only when asked for.
+ASR_MODEL_AR = env("PEAKCUT_ASR_MODEL_AR", "sherpa-onnx-nemo-fastconformer-ar-int8")
+ASR_MODEL_AR_URL = env("PEAKCUT_ASR_MODEL_AR_URL",
+                       f"https://huggingface.co/madwezza/peakcut-arabic-speech/resolve/main/{ASR_MODEL_AR}.tar.bz2")
 DATABASE_URL = env("DATABASE_URL") or f"sqlite:///{(DATA_DIR / 'peakcut.db').as_posix()}"
 
 for d in (USERS_DIR, MODELS_DIR, TMP_DIR, FONTS_DIR):
