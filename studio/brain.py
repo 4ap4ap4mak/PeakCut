@@ -369,30 +369,56 @@ def find_live_clips(words, z, now, chat=None, title="", uploader="", min_len=15,
     return clips, spent
 
 
+def _first(out):
+    """The one clip in an answer. Most services send a list holding it; some send the clip on its own."""
+    if isinstance(out, dict):
+        return out
+    return next((c for c in (out if isinstance(out, list) else []) if isinstance(c, dict)), None)
+
+
+def _one_prompt(intro, text, title, uploader, game=None):
+    return (f"{intro}\nVideo title: {_safe(title) or 'unknown'}\nChannel: {_safe(uploader) or 'unknown'}\n\n"
+            "Return exactly one item describing it. Set start and end to 0."
+            + _game_rules(game)
+            + _rules(0, 0, _safe(text, 8000)))
+
+
 def describe(text, title="", uploader="", game=None, timeout=None):
     """Hook, title and post text for a clip the user cut by hand."""
     blank = {"score": 0, "category": "other", "hook": "", "title": "", "description": "", "hashtags": [],
              "highlight_words": [], "reason": "Clipped by hand."}
     if len(text.split()) < 4:
         return blank
-    prompt = (f"A streamer's viewer clipped this moment by hand.\nVideo title: {_safe(title) or 'unknown'}\n"
-              f"Channel: {_safe(uploader) or 'unknown'}\n\nReturn exactly one item describing it. Set start and end to 0."
-              + _game_rules(game)
-              + _rules(0, 0, _safe(text, 8000)))
+    prompt = _one_prompt("A streamer's viewer clipped this moment by hand.", text, title, uploader, game)
     try:
         out, _m, _u = ask_ai(prompt, purpose="Hand clip: title and hook", timeout=timeout)
-        if not out:
+        if not _first(out):
             # A quiet or half-finished moment: the answer came back empty. The viewer asked for this
             # clip by hand, so it is asked once more, plainly.
             out, _m, _u = ask_ai(prompt + "\n\nReturn one item. The moment is short; describe what was said.",
                                  purpose="Hand clip: title and hook", timeout=timeout)
-        if not out:
+        if not _first(out):
             return blank
-        c = _tidy(out[0], 0, 0, game)
+        c = _tidy(_first(out), 0, 0, game)
         c["reason"] = "Clipped by hand."
         return c
     except Exception:  # noqa: BLE001
         return blank
+
+
+def post_text(text, title="", uploader="", game=None):
+    """A fresh title, description and hashtags for a clip that is already made, from what is said in it.
+    Nothing is saved here: the person reads it and decides. Says plainly why when it can't.
+    On a game stream the AI reads the same game rules as when the clip was found."""
+    if len(text.split()) < 4:
+        raise ValueError("Too few words are spoken in this clip for the AI to write about it. Write the post text yourself.")
+    out, _m, _u = ask_ai(_one_prompt("Write the post text for this short clip. The person posting it will read it first.",
+                                     text, title, uploader, game), purpose="Clip: post text")
+    c = _first(out)
+    c = _tidy(c, 0, 0, game) if c else None
+    if not c or not (c["title"] or c["description"]):
+        raise RuntimeError("The AI answered, but without a usable title or description. Try again.")
+    return {k: c[k] for k in ("title", "description", "hashtags")}
 
 
 # ---------------------------------------------------------------- live: two judges that never see each other's input

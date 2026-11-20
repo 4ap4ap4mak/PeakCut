@@ -4,6 +4,7 @@ import json
 import os
 import math
 import queue
+import re
 import shutil
 import threading
 import time
@@ -389,6 +390,8 @@ def request_render(jid, cid, changes: dict):
     for k in ("hook", "title", "description", "style", "layout"):
         if k in changes:
             new[k] = str(changes[k])[:{"hook": 60, "title": 100, "description": 2000}.get(k, 20)]
+    if "hashtags" in changes:
+        new["hashtags"] = clean_hashtags(changes["hashtags"])
     if new.get("style") not in render.STYLES:
         new["style"] = DEFAULTS["style"]
     if new.get("layout") not in render.LAYOUTS:
@@ -396,6 +399,56 @@ def request_render(jid, cid, changes: dict):
     clip.update(new, status="queued")
     save(job)
     _q.put(("clip", jid, cid))
+
+
+def clean_hashtags(v) -> list:
+    """Hashtags typed by a person ("#funny gaming") or sent by the page as a list: plain words, at most 8."""
+    if isinstance(v, str):
+        v = v.split()
+    if not isinstance(v, list):
+        raise ValueError("Hashtags must be words separated by spaces.")
+    tags = [re.sub(r"\W", "", str(h))[:30] for h in v[:50] if isinstance(h, (str, int))]
+    return [t for t in tags if t][:8]
+
+
+def save_post_text(job, clip, changes: dict):
+    """Change a clip's title, description and hashtags without making the clip again. Posting reads them
+    from the clip when it uploads, so the next post (or one still waiting in the queue) uses the new text."""
+    text = {k: str(changes[k] or "")[:{"title": 100, "description": 2000}[k]] for k in ("title", "description") if k in changes}
+    if "hashtags" in changes:
+        text["hashtags"] = clean_hashtags(changes["hashtags"])
+    if clip.get("hashtags_in_description") and not clip.get("fixed_description") and text:
+        # This clip's description ends with its hashtags, and posting does not add them again. So the
+        # description is put back together from the Hashtags box: the words, then one line of tags.
+        desc = hashtags._TAG_IN_TEXT.sub("", text.get("description", clip.get("description") or "")).strip()
+        line = " ".join("#" + t for t in text.get("hashtags", clip.get("hashtags") or []))
+        text["description"] = ((desc + "\n\n" + line).strip() if desc else line)[:2000]
+    with _lock:
+        clip.update(text)
+    save(job)
+    side = Path(job["dir"]) / "clips" / f"{clip['id']}.json"   # the copy that sits next to the video file
+    try:
+        if side.is_file():
+            side.write_text(json.dumps({**json.loads(side.read_text(encoding="utf-8")), **text}, indent=1), encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+
+
+def spoken_in(job, clip) -> str:
+    """What is said during a clip, from the video's transcript."""
+    try:
+        words = json.loads((Path(job["dir"]) / "words.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return " ".join(str(w.get("w", "")) for w in words
+                    if isinstance(w, dict) and clip["start"] - 0.5 <= _f(w.get("s")) <= clip["end"] + 0.5)
+
+
+def _f(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return -1.0
 
 
 def render_one(job, clip, words):
