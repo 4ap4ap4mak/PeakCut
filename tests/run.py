@@ -51,6 +51,8 @@ def main() -> int:
                 ("a day-long video in little memory", ["tests/test_longvideo.py"]),
                 ("deleting and bulk actions", ["tests/test_delete.py"]),
                 ("saving a video when Windows says busy", ["tests/test_jobsave.py"]),
+                ("your own big text on the clips", ["tests/test_bigtext.py"]),
+                ("hashtags made without an AI", ["tests/test_hashtags.py"]),
                 ("big uploads in pieces", ["tests/test_upload_parts.py", BASE]),
                 ("AI services", ["tests/test_ai.py"]),
                 ("no sign-in, and the AI key from the dashboard", ["tests/test_local.py"]),
