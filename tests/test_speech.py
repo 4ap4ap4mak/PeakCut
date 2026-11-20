@@ -1,8 +1,12 @@
 """Speech models for other spoken languages (Arabic first): downloading one only when asked, removing it, choosing
 the language for a video or a creator, Arabic words, and the second machine never using the wrong language's model.
 Runs against the code directly, with its own empty data folder; nothing is downloaded."""
+import hashlib
+import io
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -35,26 +39,49 @@ assert str(config.MODELS_DIR).startswith(os.environ["PEAKCUT_DATA"]), "the test 
 downloads = []
 
 
-def fake_download(url, dest, hook=None):
+def archive(name):
     """A tiny stand-in for the real archive: the right folder name, the four files."""
-    downloads.append(url)
-    lang = next(k for k, m in fetch_model.MODELS.items() if m[2] == url)
-    name = fetch_model.MODELS[lang][1]
     src = Path(tempfile.mkdtemp(prefix="pc-tar-")) / name
     src.mkdir()
     for n in ("tokens.txt", "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"):
         (src / n).write_bytes(b"model")
-    with tarfile.open(dest, "w:bz2") as t:
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:bz2") as t:
         t.add(src, arcname=name)
-    if hook:
-        hook(1, 100, 100)
+    return out.getvalue()
 
 
-fetch_model.urllib.request.urlretrieve = fake_download
+ARCHIVES = {k: archive(m[1]) for k, m in fetch_model.MODELS.items()}
+tampered = set()      # languages whose download is swapped for a different file
 
-# ---- the list of models
+
+class Answer(io.BytesIO):
+    def __init__(self, data):
+        super().__init__(data)
+        self.headers = {"Content-Length": str(len(data))}
+
+
+def fake_open(url, timeout=None):
+    downloads.append(url)
+    lang = next(k for k, m in fetch_model.MODELS.items() if m[2] == url)
+    return Answer(ARCHIVES[lang] + (b"changed" if lang in tampered else b""))
+
+
+# ---- the list of models, and where Arabic comes from
 check("English and Arabic are known", sorted(fetch_model.MODELS), ["ar", "en"])
 check("Arabic is downloaded from its own address, not English's", fetch_model.MODELS["ar"][2] != fetch_model.MODELS["en"][2], True)
+check("Arabic's address names one fixed version of the file, not the latest",
+      fetch_model.MODELS["ar"][2], lambda u: "/resolve/main/" not in u and re.search(r"/resolve/[0-9a-f]{40}/", u))
+check("Arabic's fingerprint is known, so the download is checked", fetch_model.MODELS["ar"][5], lambda h: re.fullmatch(r"[0-9a-f]{64}", h))
+mirror = subprocess.run([sys.executable, "-c", "from studio import fetch_model as f; print(f.MODELS['ar'][2]); print(f.MODELS['ar'][5])"],
+                        env={**os.environ, "PEAKCUT_ASR_MODEL_AR_URL": "https://mirror.example/ar.tar.bz2"},
+                        capture_output=True, text=True).stdout.split()
+check("a mirror set with PEAKCUT_ASR_MODEL_AR_URL is used, and still checked against the same fingerprint",
+      mirror, ["https://mirror.example/ar.tar.bz2", fetch_model.MODELS["ar"][5]])
+real_ar = fetch_model.MODELS["ar"]
+# From here on the stand-in archive is "the real file": its fingerprint is the one expected.
+fetch_model.MODELS["ar"] = real_ar[:5] + (hashlib.sha256(ARCHIVES["ar"]).hexdigest(),)
+fetch_model.urllib.request.urlopen = fake_open
 check("each language has its own folder", fetch_model.folder("ar") != fetch_model.folder("en"), True)
 check("nothing is here to begin with", (fetch_model.status("en"), fetch_model.status("ar")), ("missing", "missing"))
 
@@ -79,6 +106,19 @@ check("the page lists both languages with their size", [(m["lang"], m["state"], 
 check("an unknown language is refused", c.post("/api/speech/xx", headers=ORIGIN).status_code, 400)
 check("another website cannot start a download", c.post("/api/speech/ar", headers={"Origin": "https://evil.example"}).status_code, 403)
 check("...and nothing was downloaded", downloads, [])
+tampered.add("ar")         # the file at the address was changed: it must not be unpacked
+try:
+    fetch_model.ensure("ar")
+    said = ""
+except RuntimeError as e:
+    said = str(e)
+check("a downloaded file with the wrong fingerprint is refused, in plain words",
+      ("not the one it expects" in said and "Nothing was unpacked" in said, fetch_model.ready("ar")), (True, False))
+check("...it says which fingerprint it got and which it expected", fetch_model.MODELS["ar"][5] in said and "SHA-256" in said, True)
+check("...the reason is shown on the Speech models page", "not the expected one" in fetch_model.state["ar"]["error"], True)
+check("...and nothing is left behind", sorted(p.name for p in config.MODELS_DIR.iterdir()) if config.MODELS_DIR.exists() else [], [])
+tampered.clear()
+downloads.clear()
 check("the owner can start the Arabic download", c.post("/api/speech/ar", headers=ORIGIN).status_code, 200)
 for _ in range(100):
     if fetch_model.status("ar") == "ready":
