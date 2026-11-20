@@ -124,10 +124,23 @@ FONTS_DIR = DATA_DIR / "fonts"          # caption fonts, copied from studio/font
 # YouTube already has a word-by-word transcript of most videos. With this on, that is what the AI reads to find the
 # clips (seconds instead of transcribing hours), and our own model is run only on the clips themselves.
 YT_TRANSCRIPT = env("PEAKCUT_YT_TRANSCRIPT", "1") != "0"
+# YouTube often refuses servers in data centres ("sign in to confirm you're not a bot"). Cookies from a signed-in
+# YouTube account get past that: an admin pastes them under Settings, Connected apps, and they are kept in this file.
+YT_COOKIES = Path(env("PEAKCUT_YT_COOKIES") or DATA_DIR / "youtube-cookies.txt")
 # the compact model for processors; a machine with a graphics card sets PEAKCUT_ASR_MODEL to the full-precision one
 ASR_MODEL_NAME = env("PEAKCUT_ASR_MODEL", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
 ASR_MODEL_DIR = MODELS_DIR / ASR_MODEL_NAME
 DATABASE_URL = env("DATABASE_URL") or f"sqlite:///{(DATA_DIR / 'peakcut.db').as_posix()}"
+# Commercials and "be right back" screens are stitched into streams. A clip taken from one is worthless, so those
+# seconds can be found and left out. It is off by default: it reads the whole video once, which is not free, and
+# a video that is meant to be still must not lose its clips. PEAKCUT_SKIP_STATIC=1 turns it on.
+# The threshold is the mean luma difference between frames: under it, nothing moved.
+SKIP_STATIC = env("PEAKCUT_SKIP_STATIC", "0") == "1"
+STATIC_THRESHOLD = float(env("PEAKCUT_STATIC_THRESHOLD", "0.4"))
+STATIC_MIN_SECONDS = float(env("PEAKCUT_STATIC_MIN_SECONDS", "6"))
+# How long one AI answer may take on a live stream. It is short on purpose: while the AI thinks, the
+# recording carries on, so a slow answer costs a check, not the stream.
+LIVE_AI_TIMEOUT = float(env("PEAKCUT_LIVE_AI_TIMEOUT", "45"))
 
 for d in (USERS_DIR, MODELS_DIR, TMP_DIR, FONTS_DIR):
     d.mkdir(parents=True, exist_ok=True)

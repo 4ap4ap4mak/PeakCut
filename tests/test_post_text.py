@@ -86,6 +86,16 @@ def main(data):
             check("the video's title goes along as context", "My stream" in prompt)
             check("the new text comes back to the page", out["title"] == GOOD["title"])
             check("the new text is not saved until the person posts or saves", clip["title"] == "Old title")
+            check("a stream with no game gets no game rules", "This stream is" not in prompt)
+
+            job["game"] = "gta 6"
+            with patch.object(brain, "ask_ai", return_value=([GOOD], "m", 10)) as ai:
+                server.clip_write(job["id"], "clip1")
+            check("on a game stream, Write again with AI reads the same game rules", "This stream is Grand Theft Auto VI" in ai.call_args.args[0])
+            with patch.object(brain, "ask_ai", return_value=([GOOD], "m", 10)) as ai:
+                brain.describe(SAID, game="gta 6")
+            check("a hand-made clip reads the game rules the same way", "This stream is Grand Theft Auto VI" in ai.call_args.args[0])
+            job.pop("game")
 
             with patch.object(brain, "ask_ai", side_effect=RuntimeError("The AI is not set up on this server.")):
                 check("no AI set up: a clear error, not a crash", fails_with(lambda: server.clip_write(job["id"], "clip1"), 503, "not set up"))
@@ -106,6 +116,17 @@ def main(data):
             check("hashtags that are not words or a list are refused",
                   fails_with(lambda: server.clip_text(job["id"], "clip1", {"hashtags": {"a": 1}}), 400, "hashtags"))
             check("an unknown clip is not found", fails_with(lambda: server.clip_text(job["id"], "nope", {"title": "x"}), 404))
+
+            # A clip whose description already ends with its hashtags (how clips are made now)
+            clip.update(description="Old words\n\n#old #tags", hashtags=["old", "tags"], hashtags_in_description=True)
+            server.clip_text(job["id"], "clip1", {"description": "New words\n\n#old #tags", "hashtags": "new tags"})
+            check("changed hashtags replace the line at the end of the description",
+                  clip["description"] == "New words\n\n#new #tags" and clip["hashtags"] == ["new", "tags"])
+            check("and are posted once, not twice", posting._caption(clip, {"post_footer": ""}).count("#new") == 1)
+            server.clip_text(job["id"], "clip1", {"description": "Only words, from the AI"})
+            check("a description without its tags gets them back at the end",
+                  clip["description"] == "Only words, from the AI\n\n#new #tags")
+            clip.pop("hashtags_in_description")
 
             server.rerender(job["id"], "clip1", {"hashtags": "#one two"})
             check("Save and re-make also keeps typed hashtags", clip["hashtags"] == ["one", "two"])
