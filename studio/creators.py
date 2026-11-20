@@ -20,7 +20,8 @@ DEFAULTS = {"name": "", "channel": "", "style": "bounce", "layout": "blur", "cap
             "game": "", "hook_text": "", "description_text": "",
             "trigger_words": "clip that, clip it",
             "autopost": False, "accounts": [], "post_min_score": 75, "post_gap_min": 45, "daily_cap": 6,
-            "privacy": "public", "post_footer": "", "rate_per_1k": 0.0, "channels": {}}
+            "privacy": "public", "post_footer": "", "rate_per_1k": 0.0, "channels": {},
+            "lang": "en"}    # the language this creator speaks: picks the speech model, for live recordings too
 PLATFORMS = ("youtube", "twitch", "kick")
 
 
@@ -99,6 +100,9 @@ def _clean(data: dict) -> dict:
             v = v if v in ("both", "either") else "both"
         elif k == "privacy":
             v = v if v in ("public", "unlisted", "private") else "public"
+        elif k == "lang":
+            from . import fetch_model
+            v = v if fetch_model.known(v) else "en"
         else:
             v = str(v).strip()[:300]
         out[k] = v
